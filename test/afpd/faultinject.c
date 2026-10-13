@@ -100,14 +100,21 @@ int faultinject_open_works(const char *scratch_path)
 
 /* ---- Role 2: LD_PRELOAD interposer (libfaultinject.so) ---- */
 
-#include <dlfcn.h>
 #include <dirent.h>
+#include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdarg.h>
 #include <stdint.h>
+#include <string.h>
+#include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
+
+#ifdef __linux__
+#include <sys/sendfile.h>
+#endif
 
 /* `fi` is defined in the afpdtest executable and exported dynamically; this is
  * the same object the test code arms.  A weak fallback keeps the preload
@@ -133,6 +140,16 @@ static int fault_should_fire(int armed, int *fail_after, int errnum)
     }
 
     return 0;
+}
+
+/*! @brief Count an armed call on c and tell whether it fails now */
+static int fi_call_fire(struct fi_call *c)
+{
+    if (c->armed) {
+        c->calls++;
+    }
+
+    return fault_should_fire(c->armed, &c->fail_after, c->errnum);
 }
 
 typedef int (*open_fn)(const char *, int, ...);
@@ -261,6 +278,123 @@ int close(int fd)
     return real_close(fd);
 }
 
+/*!
+ * @brief The real call of an interposer: under 64-bit offsets glibc names the
+ *        definition name64, and on a 32-bit build its plain name takes a
+ *        32-bit offset, so name64 is looked up first
+ */
+static void *fi_real64(const char *name64, const char *name)
+{
+    void *real = dlsym(RTLD_NEXT, name64);
+    return real != NULL ? real : dlsym(RTLD_NEXT, name);
+}
+
+/*! @brief count, cut to max when max is set */
+static size_t fi_cap(size_t count, int max)
+{
+    return max > 0 && count > (size_t)max ? (size_t)max : count;
+}
+
+typedef ssize_t (*read_fn)(int, void *, size_t);
+static read_fn real_read;
+
+/*! @brief read() interposer: counts and fails armed calls, and reads no
+ *         more than read_max bytes a call when it is set */
+ssize_t read(int fd, void *buf, size_t count)
+{
+    if (!real_read) {
+        real_read = (read_fn)dlsym(RTLD_NEXT, "read");
+    }
+
+    if (fi_call_fire(&fi.read)) {
+        return -1;
+    }
+
+    return real_read(fd, buf, fi_cap(count, fi.read_max));
+}
+
+typedef ssize_t (*write_fn)(int, const void *, size_t);
+static write_fn real_write;
+
+/*!
+ * @brief write() interposer: the next write_zero calls write nothing and
+ *        return 0, and with write_max set a call writes no more than
+ *        write_max bytes
+ */
+ssize_t write(int fd, const void *buf, size_t count)
+{
+    if (!real_write) {
+        real_write = (write_fn)dlsym(RTLD_NEXT, "write");
+    }
+
+    if (fi.write_zero > 0) {
+        fi.write_zero--;
+        return 0;
+    }
+
+    return real_write(fd, buf, fi_cap(count, fi.write_max));
+}
+
+typedef ssize_t (*pread_fn)(int, void *, size_t, off_t);
+static pread_fn real_pread;
+
+/*! @brief pread() interposer: read()'s countdown and cap */
+ssize_t pread(int fd, void *buf, size_t count, off_t offset)
+{
+    if (!real_pread) {
+        real_pread = (pread_fn)fi_real64("pread64", "pread");
+    }
+
+    if (fi_call_fire(&fi.read)) {
+        return -1;
+    }
+
+    return real_pread(fd, buf, fi_cap(count, fi.read_max), offset);
+}
+
+typedef off_t (*lseek_fn)(int, off_t, int);
+static lseek_fn real_lseek;
+
+/*! @brief lseek() interposer: counts and fails armed calls */
+off_t lseek(int fd, off_t offset, int whence)
+{
+    if (!real_lseek) {
+        real_lseek = (lseek_fn)fi_real64("lseek64", "lseek");
+    }
+
+    if (fi_call_fire(&fi.lseek)) {
+        return -1;
+    }
+
+    return real_lseek(fd, offset, whence);
+}
+
+typedef int (*asp_wrtcont_fn)(void *, char *, size_t *);
+static asp_wrtcont_fn real_asp_wrtcont;
+
+/*!
+ * @brief asp_wrtcont() interposer: counts and fails armed calls, or with
+ *        asp_wrtcont_fill hands back the bytes asked for, 0xa5 each, as an
+ *        AppleTalk client's write continuation would
+ */
+int asp_wrtcont(void *asp, char *buf, size_t *buflen)
+{
+    if (fi_call_fire(&fi.asp_wrtcont)) {
+        return -1;
+    }
+
+    if (fi.asp_wrtcont_fill) {
+        memset(buf, 0xa5, *buflen);
+        return 0;
+    }
+
+    if (!real_asp_wrtcont) {
+        real_asp_wrtcont = (asp_wrtcont_fn)dlsym(RTLD_NEXT, "asp_wrtcont");
+    }
+
+    return real_asp_wrtcont(asp, buf, buflen);
+}
+
 /* fcntl()'s third argument is absent, an int or a pointer by command; it is
  * read and forwarded as one pointer-sized slot, as libc's own fcntl() reads
  * it, so every command keeps its argument. */
@@ -289,6 +423,7 @@ int fcntl(int fd, int cmd, ...)
             fi.setlk_calls++;
         }
 
+        fi.lock_last_cmd   = cmd;
         fi.lock_last_type  = flk->l_type;
         fi.lock_last_start = flk->l_start;
         fi.lock_last_len   = flk->l_len;
@@ -384,5 +519,87 @@ ssize_t splice(int fd_in, loff_t *off_in, int fd_out, loff_t *off_out,
     return real_splice(fd_in, off_in, fd_out, off_out, len, flags);
 }
 #endif /* __linux__ */
+
+#if defined(__linux__) || defined(__FreeBSD__)
+#ifdef __linux__
+typedef ssize_t (*sendfile_fn)(int, int, off_t *, size_t);
+#else
+typedef int (*sendfile_fn)(int, int, off_t, size_t, struct sf_hdtr *, off_t *,
+                           int);
+#endif
+static sendfile_fn real_sendfile;
+
+/*! @brief Count an armed sendfile() call; does it fail? */
+static int sendfile_should_fire(void)
+{
+    if (!real_sendfile) {
+        real_sendfile = (sendfile_fn)fi_real64("sendfile64", "sendfile");
+    }
+
+    return fi_call_fire(&fi.sendfile);
+}
+#endif
+
+#ifdef __linux__
+typedef ssize_t (*send_fn)(int, const void *, size_t, int);
+static send_fn real_send;
+
+/*! @brief send() interposer: counts and fails armed calls, and sends no
+ *         more than send_max bytes a call when it is set */
+ssize_t send(int fd, const void *buf, size_t len, int flags)
+{
+    if (!real_send) {
+        real_send = (send_fn)dlsym(RTLD_NEXT, "send");
+    }
+
+    if (fi_call_fire(&fi.send)) {
+        return -1;
+    }
+
+    return real_send(fd, buf, fi_cap(len, fi.send_max), flags);
+}
+
+/*! @brief sendfile() interposer: counts and fails armed calls, and with
+ *         sendfile_fake reports a call that sent its count, moving none */
+ssize_t sendfile(int out_fd, int in_fd, off_t *offset, size_t count)
+{
+    if (sendfile_should_fire()) {
+        return -1;
+    }
+
+    if (fi.sendfile_fake) {
+        /* a native 32-bit kernel refuses a count no ssize_t holds */
+        if (count > SSIZE_MAX) {
+            errno = EINVAL;
+            return -1;
+        }
+
+        /* the most one Linux call sends */
+        if (count > 0x7ffff000) {
+            count = 0x7ffff000;
+        }
+
+        *offset += (off_t)count;
+        return (ssize_t)count;
+    }
+
+    return real_sendfile(out_fd, in_fd, offset, count);
+}
+#elif defined(__FreeBSD__)
+/*! @brief sendfile() interposer: counts and fails armed calls, sending none */
+int sendfile(int fd, int s, off_t offset, size_t nbytes, struct sf_hdtr *hdtr,
+             off_t *sbytes, int flags)
+{
+    if (sendfile_should_fire()) {
+        if (sbytes != NULL) {
+            *sbytes = 0;
+        }
+
+        return -1;
+    }
+
+    return real_sendfile(fd, s, offset, nbytes, hdtr, sbytes, flags);
+}
+#endif
 
 #endif /* FAULTINJECT_PRELOAD */

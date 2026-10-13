@@ -31,6 +31,14 @@
  * open_fail_flags = F: only opens whose flags include F count and can fail.
  */
 
+/*! The countdown of one interposed call, with its count of armed calls */
+struct fi_call {
+    int armed;
+    int fail_after;
+    int errnum;
+    int calls;              /*!< count of armed calls seen */
+};
+
 struct fault_inject {
     int open_armed;
     int open_fail_after;    /*!< succeed this many armed opens, then fail once */
@@ -41,6 +49,13 @@ struct fault_inject {
     int close_armed;
     int close_fail_after;
     int close_errno;
+    struct fi_call read;    /*!< read() and pread() alike */
+    int read_max;           /*!< read() and pread() read at most this */
+    int write_max;          /*!< a write() writes at most this many bytes */
+    int write_zero;         /*!< the next write_zero write()s write nothing */
+    struct fi_call lseek;
+    struct fi_call asp_wrtcont;
+    int asp_wrtcont_fill;   /*!< asp_wrtcont() hands back the bytes asked for */
     int fcntl_armed;
     int fcntl_fail_after;
     int fcntl_errno;
@@ -51,6 +66,7 @@ struct fault_inject {
     int   getlk_calls;       /*!< count of F_GETLK calls seen while watching */
     int   setlk_calls;       /*!< count of F_SETLK/F_SETLKW calls seen */
     int   lock_last_type;    /*!< l_type of the most recent watched lock fcntl */
+    int   lock_last_cmd;     /*!< cmd of the most recent watched lock fcntl */
     off_t lock_last_start;   /*!< l_start of the most recent watched lock fcntl */
     off_t lock_last_len;     /*!< l_len   of the most recent watched lock fcntl */
     int fchdir_armed;
@@ -69,6 +85,10 @@ struct fault_inject {
     int splice_file_fail_after;
     int splice_file_errno;
     int pipe_size_limit;    /*!< F_SETPIPE_SZ above this fails with EPERM */
+    struct fi_call send;
+    int send_max;           /*!< a send() sends at most this many bytes */
+    struct fi_call sendfile;
+    int sendfile_fake;      /*!< a sendfile() reports its count, moving none */
 };
 
 extern struct fault_inject fi;

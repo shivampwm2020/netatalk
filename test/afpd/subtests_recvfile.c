@@ -19,7 +19,6 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
-#include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -46,7 +45,6 @@
 #include "test.h"
 #include "test_capabilities.h"
 
-#define RF_CMD   (DSI_BLOCKSIZ + 2)
 #define RF_A_LEN (1024 * 1024)
 #define RF_B_LEN (256 * 1024)
 /* fits a loopback window with nobody reading */
@@ -100,10 +98,7 @@ static size_t rf_write_frame(uint8_t *p, uint16_t reqid, uint16_t refnum,
  */
 static size_t rf_cmd_frame(uint8_t *p, uint16_t reqid)
 {
-    dsi_test_header(p, DSIFUNC_CMD, reqid, 0, 2);
-    p[DSI_BLOCKSIZ] = AFP_GETSRVPARAM;
-    p[DSI_BLOCKSIZ + 1] = 0;
-    return RF_CMD;
+    return dsi_test_frame(p, DSIFUNC_CMD, reqid, 0, 2, AFP_GETSRVPARAM);
 }
 
 /*!
@@ -237,8 +232,9 @@ static int rf_tcp_setup(struct rf *rf, AFPObj *obj, struct vol *vol)
     }
 
     if (dsi_test_connect_tcp(&rf->dsi, &rf->peer) != 0) {
+        int err = errno;
         rf_teardown(rf);
-        return TEST_SKIP;
+        return dsi_test_no_loopback(err) ? TEST_SKIP : -1;
     }
 
     return 0;
@@ -920,9 +916,7 @@ int utest_recvfile_pipe_steps_down(AFPObj *obj, struct vol *vol)
  */
 int utest_write_fork_short_write_fails_request(AFPObj *obj, struct vol *vol)
 {
-    struct rlimit saved;
-    struct rlimit limit;
-    void (*xfsz)(int);
+    struct fsize_cap cap;
     struct rf rf;
     size_t len;
     int ret;
@@ -933,25 +927,21 @@ int utest_write_fork_short_write_fails_request(AFPObj *obj, struct vol *vol)
 
     ret = -1;
     rf.obj.options.flags &= ~OPTION_RECVFILE;
-    xfsz = signal(SIGXFSZ, SIG_IGN);
 
-    if (getrlimit(RLIMIT_FSIZE, &saved) == 0
-            && rf_open(&rf, 0, OPENFORK_DATA)) {
-        limit = saved;
-        limit.rlim_cur = RF_B_LEN;
+    if (rf_open(&rf, 0, OPENFORK_DATA)) {
         len = rf_write_frame(rf.buf, 1, rf.refnum[0], 0, RF_A_LEN, 0xA5);
         len += rf_cmd_frame(rf.buf + len, 2);
 
-        if (setrlimit(RLIMIT_FSIZE, &limit) == 0
-                && rf_send(&rf, rf.buf, len) == 0
-                && rf_write(&rf) == AFPERR_DFULL && rf_next_is(&rf, 2)) {
-            ret = 0;
-        }
+        if (fsize_cap(&cap, RF_B_LEN) == 0) {
+            if (rf_send(&rf, rf.buf, len) == 0
+                    && rf_write(&rf) == AFPERR_DFULL && rf_next_is(&rf, 2)) {
+                ret = 0;
+            }
 
-        setrlimit(RLIMIT_FSIZE, &saved);
+            fsize_uncap(&cap);
+        }
     }
 
-    signal(SIGXFSZ, xfsz);
     rf_teardown(&rf);
     return ret;
 }

@@ -40,6 +40,13 @@ Changes in 4.7.0
 * FIX: libatalk: reject AppleDouble sidecars that place the resource fork
   anywhere but offset 82, GitHub #3378
 * UPD: afpd: raise the default 'splice size' to 1 MiB, GitHub #3378
+* FIX: afpd: harden file reads on every platform against replies past 4 GiB,
+  files sendfile refuses, buffer overruns, and failed sends, GitHub #3402
+* FIX: afpd: harden the desktop database's icon calls against failed and
+  concurrent requests and damaged icon files, GitHub #3402
+* FIX: libatalk: copying a data fork, or converting an AppleDouble v2
+  resource fork, completes after a short write, GitHub #3402
+* UPD: afpd: afpd -V reports sendfile support, GitHub #3402
 
 Changes in 4.6.1
 ----------------

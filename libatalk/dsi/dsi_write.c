@@ -152,6 +152,24 @@ void dsi_writeflush(DSI *dsi)
 }
 
 /*!
+ * @brief Read off the whole payload of a DSIWrite that no handler read
+ *
+ * A DSICommand's payload arrives with its header, so the call reads nothing
+ * for one.
+ *
+ * @param[in,out] dsi  DSI session with the request header parsed
+ */
+void dsi_writedrain(DSI *dsi)
+{
+    if (dsi->header.dsi_command != DSIFUNC_WRITE) {
+        return;
+    }
+
+    dsi_writeinit(dsi, NULL);
+    dsi_writeflush(dsi);
+}
+
+/*!
  * @brief Close the recvfile pipe of the session, the next write opens another
  *
  * @param[in,out] dsi  DSI session
