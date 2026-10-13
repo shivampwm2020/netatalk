@@ -1,8 +1,7 @@
-/*!
- * @file
- * @author  Daniel S. Haischt <me@daniel.stefan.haischt.name>
- * @brief   Avahi based Zeroconf support
- * @sa      https://avahi.org/doxygen/html/
+/*
+ * Author:  Daniel S. Haischt <me@daniel.stefan.haischt.name>
+ * Purpose: Avahi based Zeroconf support
+ * Docs:    https://avahi.org/doxygen/html/
  */
 
 #ifndef AFPD_AVAHI_H

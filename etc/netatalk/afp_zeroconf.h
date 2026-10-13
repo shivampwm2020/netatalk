@@ -1,9 +1,8 @@
-/*!
- * @file
- * @author  Daniel S. Haischt <me@daniel.stefan.haischt.name>
- * @brief   Zeroconf facade, that abstracts access to a
+/*
+ * Author:  Daniel S. Haischt <me@daniel.stefan.haischt.name>
+ * Purpose: Zeroconf facade, that abstracts access to a
  *          particular Zeroconf implementation
- * @sa      http://www.dns-sd.org/
+ * Doc:     http://www.dns-sd.org/
  */
 
 #ifndef AFPD_ZEROCONF_H

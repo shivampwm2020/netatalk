@@ -21,13 +21,6 @@
  * modified for round trip by didier gautheron
  */
 
-/*!
- * @file
- * @brief MacHebrew
- * @sa Reference
- * http://www.unicode.org/Public/MAPPINGS/VENDORS/APPLE/
- */
-
 static const unsigned short mac_hebrew_2uni[128] = {
     /* 0x80 0x81 -> 0x05f2+0x05b7 was 0xfb1f */
     0x00c4,     01, 0x00c7, 0x00c9, 0x00d1, 0x00d6, 0x00dc, 0x00e1,

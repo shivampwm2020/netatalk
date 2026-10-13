@@ -18,8 +18,7 @@
  *      @(#)if_llc.h	7.2 (Berkeley) 6/28/90
  */
 
-/*!
- * @file
+/*
  * IEEE 802.2 Link Level Control headers, for use in conjunction with
  * 802.{3,4,5} media access control methods.
  *

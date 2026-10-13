@@ -1,8 +1,3 @@
-/*!
- * @file
- * Header file for lantest directory cache statistics functions
- */
-
 #ifndef LANTEST_DIRCACHE_STATS_H
 #define LANTEST_DIRCACHE_STATS_H
 

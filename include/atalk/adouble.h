@@ -21,11 +21,6 @@
 *  netatalk@itd.umich.edu
 */
 
-/*!
- * @file
- * @brief Part of Netatalk's AppleDouble implementatation
- */
-
 #ifndef _ATALK_ADOUBLE_H
 #define _ATALK_ADOUBLE_H
 

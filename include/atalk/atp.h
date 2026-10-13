@@ -31,35 +31,6 @@
 #include <sys/time.h>
 #include <netatalk/at.h>
 
-/*!
- @file
- @brief ATP packet format
-
- @code
- |----------------|
- | link header    |
- |      ...       |
- |----------------|
- | DDP header     |
- |      ...       |
- |   type = 3     |
- |----------------|
- | control info   | --> bits 7,6: function code
- |----------------|            5: XO bit
- | bitmap/seq no. |            4: EOM bit
- |----------------|            3: STS bit
- | TID (MSB)      |        2,1,0: release timer code (ignored under phase I)
- |----------------|
- | TID (LSB)      |
- |----------------|
- | user bytes (4) |
- |----------------|
- | data (0-578)   |
- |      ...       |
- |----------------|
- @endcode
-*/
-
 struct atphdr {
     uint8_t	atphd_ctrlinfo;	/*!< control information */
     uint8_t	atphd_bitmap;   /*!< bitmap or sequence number */

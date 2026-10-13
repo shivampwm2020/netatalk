@@ -17,9 +17,8 @@
 
 #include <sys/types.h>   /* off_t */
 
-/*!
- * @file
- * @brief Test-only fault-injection control block (see faultinject.c).
+/*
+ * Test-only fault-injection control block (see faultinject.c).
  *
  * Usage in a test (LD_PRELOAD interposition is global, so arm narrowly):
  *   fault_inject_reset();

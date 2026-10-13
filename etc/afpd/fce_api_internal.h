@@ -1,7 +1,6 @@
-/*!
- * @file
- * @brief Internal definitions for File Change Events API
- * @author mw
+/*
+ * Internal definitions for File Change Events API
+ * Author: Mark Williams
  */
 
 #ifndef _FCE_API_INTERNAL_H

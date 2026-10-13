@@ -1,15 +1,18 @@
 /*
-   Copyright (c) 2010 Frank Lahm <franklahm@gmail.com>
-
-   This program is free software; you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2 of the License, or
-   (at your option) any later version.
-
-   This program is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
+ * Error checking macros
+ * For usage see doc/developer/logging.md
+ *
+ * Copyright (c) 2010 Frank Lahm <franklahm@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #ifndef ERRCHECK_H
@@ -27,35 +30,6 @@
     } while (0)
 #define EC_CLEANUP cleanup
 #define EC_EXIT return ret
-
-/*!
- * @file
- * @brief Error checking macros
- * @sa ./doc/developer/developer.md
- *
- * We have these macros:
- * @code
- * EC_ZERO, EC_ZERO_LOG, EC_ZERO_LOGSTR, EC_ZERO_LOG_ERR
- * EC_NEG1, EC_NEG1_LOG, EC_NEG1_LOGSTR, EC_NEG1_LOG_ERR
- * EC_NULL, EC_NULL_LOG, EC_NULL_LOGSTR, EC_NULL_LOG_ERR
- * @endcode
- *
- * A boileplate function template is:
- *
- * @code
- *   int func(void)
- *   {
- *       EC_INIT;
- *
- *       ...your code here...
- *
- *       EC_STATUS(0);
- *
- *   EC_CLEANUP:
- *       EC_EXIT;
- *   }
- * @endcode
- */
 
 /*! check for return val 0 which is ok, every other is an error, prints errno */
 #define EC_ZERO_LOG(a)                                                  \

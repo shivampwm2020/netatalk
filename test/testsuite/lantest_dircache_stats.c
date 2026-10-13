@@ -1,4 +1,6 @@
 /*
+ * Lantest directory cache statistics functions
+ *
  * Copyright (c) 2025 Andy Lemin (andylemin)
  * Credits; Based on work by Netatalk contributors
  *

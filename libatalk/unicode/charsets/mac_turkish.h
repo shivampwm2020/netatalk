@@ -18,11 +18,6 @@
  * Suite 330, Boston, MA 02111-1307, USA.
  */
 
-/*!
- * @file
- * MacTurkish
- */
-
 static const unsigned short mac_turkish_2uni[128] = {
     /* 0x80 */
     0x00c4, 0x00c5, 0x00c7, 0x00c9, 0x00d1, 0x00d6, 0x00dc, 0x00e1,

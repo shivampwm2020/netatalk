@@ -1,11 +1,8 @@
 /*
+ * interface between afpd uam.c and auth.c
+ *
  * Copyright (c) 1999 Adrian Sun (asun@zoology.washington.edu)
  * All Rights Reserved.  See COPYRIGHT.
- */
-
-/*!
- * @file
- * interface between uam.c and auth.c
  */
 
 #ifndef AFPD_UAM_AUTH_H

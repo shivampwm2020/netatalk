@@ -1,13 +1,3 @@
-/*!
- * @file
- * @brief Netatalk utility functions
- *
- * Utility functions for these areas:
- * * sockets
- * * locking
- * * misc UNIX function wrappers, e.g. for getcwd
- */
-
 #ifndef _ATALK_UTIL_H
 #define _ATALK_UTIL_H 1
 

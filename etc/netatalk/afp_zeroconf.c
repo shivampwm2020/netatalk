@@ -1,9 +1,14 @@
+/*
+ * Author:  Daniel S. Haischt <me@daniel.stefan.haischt.name>
+ * Purpose: Zeroconf facade, that abstracts access to a
+ *          particular Zeroconf implementation
+ * Doc:     http://www.dns-sd.org/
+ */
+
 /*!
  * @file
- * @author  Daniel S. Haischt <me@daniel.stefan.haischt.name>
- * @brief   Zeroconf facade, that abstracts access to a
- *          particular Zeroconf implementation
- * @sa      http://www.dns-sd.org/
+ * @brief Register and withdraw AFP services through the Zeroconf
+ * implementation
  */
 
 #ifdef HAVE_CONFIG_H

@@ -1,10 +1,8 @@
-/*!
- * @file
- * @author: mw
+/*
+ * File:   fce_api.h
+ * Author: Mark Williams
  *
- * Created on 1. Oktober 2010, 21:35
- *
- * @brief API calls for file change event api
+ * API calls for file change event api
  */
 
 #ifndef _FCE_API_H

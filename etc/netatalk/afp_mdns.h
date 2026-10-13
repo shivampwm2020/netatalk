@@ -1,8 +1,7 @@
-/*!
- * @file
- * @author   Lee Essen <lee.essen@nowonline.co.uk>
- * @brief    mDNS based Zeroconf support
- * @note     Based on: avahi support from Daniel S. Haischt <me@daniel.stefan.haischt.name>
+/*
+ * Author:   Lee Essen <lee.essen@nowonline.co.uk>
+ * Based on: avahi support from Daniel S. Haischt <me@daniel.stefan.haischt.name>
+ * Purpose:  mdns based Zeroconf support
  */
 
 #ifndef AFPD_MDNS_H

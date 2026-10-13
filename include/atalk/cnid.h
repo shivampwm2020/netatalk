@@ -1,4 +1,6 @@
 /*
+ * Shared CNID database interface
+ *
  * Copyright (c) 2003 the Netatalk Team
  * Copyright (c) 2003 Rafal Lewczuk <rlewczuk@pronet.pl>
  * Copyright (c) 2010 Frank Lahm
@@ -12,16 +14,6 @@
  * to a later verion of the GNU GPL in
  * https://github.com/Netatalk/netatalk/issues/1193
  *
- */
-
-/*!
- * @file
- * This file contains all generic CNID related stuff
- * declarations. Included:
- * - CNID factory, which retrieves (eventually instantiates)
- *   CNID objects on demand
- * - selection of CNID backends (default, detected by volume)
- * - full set of CNID operations needed by server core.
  */
 
 #ifndef _ATALK_CNID__H

@@ -18,11 +18,6 @@
  * Suite 330, Boston, MA 02111-1307, USA.
  */
 
-/*!
- * @file
- * MacGreek
- */
-
 static const unsigned short mac_greek_2uni[128] = {
     /* 0x80 */
     0x00c4, 0x00b9, 0x00b2, 0x00c9, 0x00b3, 0x00d6, 0x00dc, 0x0385,

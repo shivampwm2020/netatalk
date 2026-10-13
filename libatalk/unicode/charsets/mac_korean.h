@@ -17,12 +17,6 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-/*!
- * @file
- * @sa Reference
- * http://www.unicode.org/Public/MAPPINGS/VENDORS/APPLE/
- */
-
 static const uint16_t mac_korean_uni2_page00[][2] = {
     /* 0x00a */ { 0x7a2d,    0 }, { 0x0880,    9 },
 };

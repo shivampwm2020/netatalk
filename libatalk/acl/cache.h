@@ -1,24 +1,23 @@
 /*
-   Copyright (c) 2008,2009 Frank Lahm <franklahm@gmail.com>
-
-   This program is free software; you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2 of the License, or
-   (at your option) any later version.
-
-   This program is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
+ * LDAP cache interface
+ *
+ * Copyright (c) 2008,2009 Frank Lahm <franklahm@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #ifndef LDAPCACHE_H
 #define LDAPCACHE_H
 
-/*!
- * @file
- * @brief LDAP cache interface
- *
+/*
  * We need to cache all LDAP query results, they just take too long.
  * We do hashing with chaining. Two caches are needed:
  * 1. name -> uuid, indexed by a hash(f(): hashstring) of the name

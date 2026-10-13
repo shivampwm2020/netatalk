@@ -309,11 +309,13 @@ Ex.
 
 #### Code documentation
 
-- Building developer documentation requires Doxygen 1.17.0 or later for native Mermaid diagram support
-- We use a Doxygen based documentation system for code documentation, with:
-  - *QDoc* style `/*! ... */` markers
-  - Use `/*!< ... */` for trailing comments
-  - *JavaDoc* style `@` prefixed [commanded tags](https://www.doxygen.nl/manual/commands.html)
+We use Doxygen to generate developer documentation from the source code with the following conventions.
+Version 1.17.0 or later is required since we have native Mermaid diagram support.
+
+The baseline syntax is a combination of QDoc `/*! ... */` markers and JavaDoc style `@` prefixed [commanded tags](https://www.doxygen.nl/manual/commands.html).
+
+- Function signatures should be documented in the implementation file, not the header file
+- Use `/*!< ... */` for trailing comments
 - Most comment blocks should include at least `@brief`, `@param` and `@returns`
 - Indicate input/output status for `@param` with \[in\],\[out\], and \[in,out\] tags
 - Document parameter constraints, resource ownership, and return values
@@ -321,7 +323,7 @@ Ex.
 - Surround code blocks with `@code ... @endcode` for proper formatting
 - Use CommonMark markdown for rich formatting, for instance for numbered and bulleted lists
 
-Ex.
+Complete example:
 
 ```C
 /*!

@@ -1,4 +1,6 @@
 /*
+ * Data structures and utility functions for child processes
+ *
  * Copyright (c) 1997 Adrian Sun (asun@zoology.washington.edu)
  * All rights reserved.
  */
@@ -9,13 +11,6 @@
 #include <arpa/inet.h>
 #include <stddef.h>
 #include <sys/types.h>
-
-/*!
- * @file
- * @brief data structures and utility functions for child processes
- *
- * most of the implementation is in libatalk/util/server_child.c
- */
 
 #define CHILD_HASHSIZE 32
 

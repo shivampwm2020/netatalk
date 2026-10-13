@@ -22,8 +22,7 @@
 #define _BYTEORDER_H
 #include <arpa/inet.h>
 
-/*!
-   @file
+/*
    Macros for machine independent short and int manipulation.
 
    Derived from Samba's byteorder.h by Andrew Tridgell, where SVAL/IVAL
