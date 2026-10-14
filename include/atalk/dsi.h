@@ -80,7 +80,7 @@ typedef struct DSI {
     int      socket;            /*!< AFP session socket */
     int      serversock;        /*!< listening socket */
     int      splice_pipe[2];    /*!< recvfile pipe, opened on first use */
-    int      splice_size;       /*!< recvfile pipe size the kernel grants */
+    int      splice_size;       /*!< recvfile round size, 0 once declined */
 
     /* DSI readahead buffer used for buffered reads in dsi_peek */
     size_t   dsireadbuf;        /*!< size of the DSI readahead buffer used in dsi_peek() */
@@ -207,9 +207,10 @@ extern ssize_t dsi_stream_read_file(DSI *, int, off_t off, const size_t len,
 extern size_t dsi_writeinit(DSI *, char **);
 extern size_t dsi_write(DSI *, void *, const size_t);
 extern void   dsi_writeflush(DSI *);
+extern void   dsi_writedrain(DSI *);
 extern void   dsi_close_pipe(DSI *);
 #ifdef WITH_RECVFILE
-extern ssize_t dsi_write_file(DSI *, int tofd, off_t *offset, bool *nosplice);
+extern int dsi_write_file(DSI *, int tofd, off_t *offset, bool *nosplice);
 #endif
 #define dsi_wrtreply(a,b)  dsi_cmdreply(a,b)
 

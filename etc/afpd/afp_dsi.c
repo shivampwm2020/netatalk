@@ -51,6 +51,7 @@
 #include <atalk/spotlight.h>
 #endif
 
+#include <atalk/unix.h>
 #include <atalk/util.h>
 #include <atalk/uuid.h>
 
@@ -88,6 +89,9 @@ typedef struct {
  * - indexed just by taking DSIreqID mod REPLAYCACHE_SIZE
  */
 static rc_elem_t replaycache[REPLAYCACHE_SIZE];
+
+/* requests refused for the frame kind that carried them */
+static unsigned int misframed_requests = 0;
 
 /*
  * Pending signal flags — set by async-signal-safe handlers,
@@ -859,6 +863,19 @@ void afp_over_dsi_sighandlers(AFPObj *obj)
 }
 
 /*!
+ * @brief Tell whether an AFP command takes a payload, which a DSIWrite frame
+ * carries
+ *
+ * @param[in] function  AFP command code
+ * @returns true for FPWrite, FPWriteExt and FPAddIcon
+ */
+static bool afp_write_command(uint8_t function)
+{
+    return function == AFP_WRITE || function == AFP_WRITE_EXT
+           || function == AFP_ADDICON;
+}
+
+/*!
  * @brief Serve the AFP requests of a DSI session until the session ends
  *
  * The call never returns. Setup installs the signal handlers, creates the
@@ -1204,6 +1221,17 @@ void afp_over_dsi(AFPObj *obj)
                     dsi->clientID, AfpNum2name(function));
                 err = replaycache[rc_idx].result;
                 /* AFP replay cache end */
+            } else if (afp_write_command(function)
+                       && afp_switch[function] != NULL) {
+                /* its payload would be the requests after it */
+                if (log_backoff(&misframed_requests)) {
+                    LOG(log_error, logtype_afpd,
+                        "(command) write function %x, refusal %u", function,
+                        misframed_requests);
+                }
+
+                dsi->datalen = 0;
+                err = AFPERR_PARAM;
             } else {
                 /* send off an afp command. in a couple cases, we take advantage
                  * of the fact that we're a stream-based protocol. */
@@ -1251,10 +1279,10 @@ void afp_over_dsi(AFPObj *obj)
 
             break;
 
-        case DSIFUNC_WRITE: /* FPWrite and FPAddIcon */
+        case DSIFUNC_WRITE: /* FPWrite, FPWriteExt and FPAddIcon */
             function = (uint8_t) dsi->commands[0];
 
-            if (afp_switch[function] != NULL) {
+            if (afp_write_command(function) && afp_switch[function] != NULL) {
                 dsi->datalen = DSI_DATASIZ;
                 dsi->flags |= DSI_RUNNING;
                 LOG(log_maxdebug, logtype_afpd, "<== Start AFP command: %s",
@@ -1268,9 +1296,17 @@ void afp_over_dsi(AFPObj *obj)
                     AfpNum2name(function), AfpErr2name(err));
                 dsi->flags &= ~DSI_RUNNING;
             } else {
-                LOG(log_error, logtype_afpd, "(write) bad function %x", function);
+                /* nothing else reads the payload, which goes before the
+                 * reply */
+                if (log_backoff(&misframed_requests)) {
+                    LOG(log_error, logtype_afpd,
+                        "(write) bad function %x, refusal %u", function,
+                        misframed_requests);
+                }
+
+                dsi_writedrain(dsi);
                 dsi->datalen = 0;
-                err = AFPERR_NOOP;
+                err = afp_switch[function] != NULL ? AFPERR_PARAM : AFPERR_NOOP;
             }
 
             if (!dsi_wrtreply(dsi, err)) {
@@ -1287,12 +1323,10 @@ void afp_over_dsi(AFPObj *obj)
             break;
 
         /* error. this usually implies a mismatch of some kind
-         * between server and client. if things are correct,
-         * we need to flush the rest of the packet if necessary. */
+         * between server and client; dsi_stream_receive() has read the
+         * frame's payload with its header, so nothing is left to flush */
         default:
             LOG(log_info, logtype_afpd, "afp_dsi: spurious command %d", cmd);
-            dsi_writeinit(dsi, NULL);
-            dsi_writeflush(dsi);
             break;
         }
 

@@ -485,9 +485,11 @@ back to the default. A value that is not a power of two is rounded up to the
 next one. The kernel may grant a smaller pipe: `fs.pipe-max-size` limits it
 to 1 MiB by default.
 >
-> ***NOTE:*** Each afpd child process keeps one pipe of this size, and all of
-them count against the kernel's pipe limit for the user afpd runs as
-(`fs.pipe-user-pages-soft`).
+> ***NOTE:*** Each session keeps one pipe of this size, counted against the
+kernel's pipe limit for the user that starts afpd
+(`fs.pipe-user-pages-soft`). With the defaults, about 56 sessions get
+full-size pipes; later ones get smaller pipes or write without splice().
+Raise the limit to serve more.
 
 ## CNID Database Backend Options
 

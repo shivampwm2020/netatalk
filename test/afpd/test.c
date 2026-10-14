@@ -18,12 +18,15 @@
 #endif /* HAVE_CONFIG_H */
 
 #include <errno.h>
+#include <fcntl.h>
+#include <signal.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <signal.h>
 #include <string.h>
-#include <stdint.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <atalk/adouble.h>
@@ -52,6 +55,7 @@
 #include "auth.h"
 #include "dircache.h"
 #include "directory.h"
+#include "faultinject.h"
 #include "file.h"
 #include "filedir.h"
 #include "fork.h"
@@ -66,6 +70,7 @@
 #ifndef NO_DDP
 #include "subtests_atp.h"
 #endif /* NO_DDP */
+#include "switch.h"
 #include "test.h"
 #include "test_capabilities.h"
 #include "volume.h"
@@ -164,6 +169,334 @@ static int utest_fork_range_rejects_wrapped_read(void)
     }
 
     return 0;
+}
+
+/*! A reply a session owes a request: its frame's command, id and code */
+struct dsp_reply {
+    uint8_t command;
+    uint16_t reqid;
+    int code;
+};
+
+/*!
+ * @brief Tell whether the next reply on peer is the one in want, with no data
+ */
+static bool dsp_reply_is(int peer, const struct dsp_reply *want)
+{
+    uint8_t expect[DSI_BLOCKSIZ];
+    uint8_t got[DSI_BLOCKSIZ];
+    dsi_test_header(expect, want->command, want->reqid, (uint32_t)want->code,
+                    0);
+    expect[0] = DSIFL_REPLY;
+    return readt(peer, got, sizeof(got), 1, 10) == (ssize_t)sizeof(got)
+           && memcmp(got, expect, sizeof(expect)) == 0;
+}
+
+/*!
+ * @brief Send len bytes of frames to a session process and tell whether it
+ *        gives the n replies in want, in order, and then ends the stream
+ *
+ * @returns 0, -1, or TEST_SKIP without loopback
+ */
+static int dsp_serve(const uint8_t *frames, size_t len,
+                     const struct dsp_reply *want, int n)
+{
+    int peer = -1;
+    pid_t pid = dsi_test_serve(&obj, &peer);
+    int ret = -1;
+    int i = 0;
+    char byte;
+
+    if (pid == -1) {
+        return dsi_test_no_loopback(errno) ? TEST_SKIP : -1;
+    }
+
+    if (write(peer, frames, len) == (ssize_t)len
+            && shutdown(peer, SHUT_WR) == 0) {
+        while (i < n && dsp_reply_is(peer, &want[i])) {
+            i++;
+        }
+
+        if (i == n && readt(peer, &byte, 1, 1, 10) == 0) {
+            ret = 0;
+        }
+    }
+
+    return dsi_test_reap(pid, peer) == 0 ? ret : -1;
+}
+
+/*!
+ * @brief A write command in a DSICommand frame, which carries no payload, is
+ *        refused, with AFPERR_PARAM when a handler serves it and AFPERR_NOOP
+ *        when none does, and the requests after it are served
+ */
+static int utest_dsi_write_command_refused_in_command_frame(void)
+{
+    static uint8_t frames[3 * (DSI_BLOCKSIZ + 20) + DSI_BLOCKSIZ + 1];
+    static const uint8_t command[] = { AFP_WRITE, AFP_WRITE_EXT, AFP_ADDICON };
+    static const struct dsp_reply want[] = {
+        { DSIFUNC_CMD, 1, AFPERR_PARAM }, { DSIFUNC_CMD, 2, AFPERR_PARAM },
+        { DSIFUNC_CMD, 3, AFPERR_NOOP }, { DSIFUNC_CMD, 4, AFPERR_NOOP },
+    };
+    AFPCmd addicon = postauth_switch[AFP_ADDICON];
+    size_t len = 0;
+    int ret;
+
+    /* the three with a 20-byte block of zeros, FPAddIcon with no handler
+     * in the session's table, then a command no handler serves */
+    for (int i = 0; i < 3; i++) {
+        len += dsi_test_frame(frames + len, DSIFUNC_CMD, (uint16_t)(i + 1), 0,
+                              20, command[i]);
+    }
+
+    len += dsi_test_frame(frames + len, DSIFUNC_CMD, 4, 0, 1, 0xff);
+    postauth_switch[AFP_ADDICON] = NULL;
+    ret = dsp_serve(frames, len, want, 4);
+    postauth_switch[AFP_ADDICON] = addicon;
+    return ret;
+}
+
+/*!
+ * @brief A DSIWrite frame whose command takes no payload, or that no handler
+ *        serves, is refused and its payload drained, so the next request
+ *        parses
+ */
+static int utest_dsi_write_frame_drained(void)
+{
+    static uint8_t frames[2 * (DSI_BLOCKSIZ + DSI_WROFF_FPWRITE + 8192)
+                          + DSI_BLOCKSIZ + 1];
+    static const struct dsp_reply want[] = {
+        { DSIFUNC_WRITE, 1, AFPERR_NOOP }, { DSIFUNC_WRITE, 2, AFPERR_PARAM },
+        { DSIFUNC_CMD, 3, AFPERR_NOOP },
+    };
+    size_t len;
+    /* a command no handler serves, then FPGetSrvrParms, each with 8 KiB of
+     * zeros, past the session's 8 KiB read-ahead, that a parse of the next
+     * frame would take for a header */
+    len = dsi_test_frame(frames, DSIFUNC_WRITE, 1, DSI_WROFF_FPWRITE,
+                         DSI_WROFF_FPWRITE + 8192, 0xff);
+    len += dsi_test_frame(frames + len, DSIFUNC_WRITE, 2, DSI_WROFF_FPWRITE,
+                          DSI_WROFF_FPWRITE + 8192, AFP_GETSRVPARAM);
+    len += dsi_test_frame(frames + len, DSIFUNC_CMD, 3, 0, 1, 0xff);
+    return dsp_serve(frames, len, want, 3);
+}
+
+/*!
+ * @brief A DSI command the session does not serve has its payload read with
+ *        its header, so the request after it parses
+ */
+static int utest_dsi_spurious_command_drains_nothing(void)
+{
+    static uint8_t frames[DSI_BLOCKSIZ + 6 + DSI_BLOCKSIZ + 1];
+    static const struct dsp_reply want[] = {
+        { DSIFUNC_CMD, 2, AFPERR_NOOP },
+    };
+    size_t len;
+    /* a DSIOpenSession inside the session with a 6-byte block of zeros,
+     * then a command no handler serves */
+    len = dsi_test_frame(frames, DSIFUNC_OPEN, 1, 0, 6, 0);
+    len += dsi_test_frame(frames + len, DSIFUNC_CMD, 2, 0, 1, 0xff);
+    return dsp_serve(frames, len, want, 1);
+}
+
+/*!
+ * @brief A DSIWrite that a session with an expired password refuses has its
+ *        payload drained, so the next request parses
+ */
+static int utest_dsi_write_refused_pwdexpired_drained(void)
+{
+    static uint8_t frames[DSI_BLOCKSIZ + DSI_WROFF_FPWRITE + 8192
+                          + DSI_BLOCKSIZ + 1];
+    static const struct dsp_reply want[] = {
+        { DSIFUNC_WRITE, 1, AFPERR_PWDEXPR }, { DSIFUNC_CMD, 2, AFPERR_NOOP },
+    };
+    AFPCmd handler = postauth_switch[AFP_WRITE];
+    size_t len;
+    int ret;
+    /* FPWrite with 8 KiB of zeros, past the session's read-ahead, refused
+     * as after a login with an expired password, then a command no handler
+     * serves */
+    len = dsi_test_frame(frames, DSIFUNC_WRITE, 1, DSI_WROFF_FPWRITE,
+                         DSI_WROFF_FPWRITE + 8192, AFP_WRITE);
+    len += dsi_test_frame(frames + len, DSIFUNC_CMD, 2, 0, 1, 0xff);
+    postauth_switch[AFP_WRITE] = afp_errpwdexpired;
+    ret = dsp_serve(frames, len, want, 2);
+    postauth_switch[AFP_WRITE] = handler;
+    return ret;
+}
+
+#ifndef HAVE_EAFD
+#define LR_SIDECAR (ADEDOFF_FINDERI_OSX + ADEDLEN_FINDERI + 32 + 100)
+
+/*!
+ * @brief FPDelete of a file whose ._ sidecar is the first len bytes of one
+ *        that records 100 bytes of resource fork at roff, behind a
+ *        FinderInfo of filen bytes at 50
+ *
+ * @returns 0 when the file and its sidecar are gone, -1 when not
+ */
+static int lr_delete(struct vol *vol, uint32_t roff, uint32_t filen,
+                     size_t len)
+{
+    const uint32_t entry[] = {
+        ADEID_RFORK, roff, 100,
+        ADEID_FINDERI, ADEDOFF_FINDERI_OSX, filen,
+    };
+    uint8_t sidecar[LR_SIDECAR] = { 0 };
+    const char *name = "lowrfork";
+    char data[MAXPATHLEN + 1];
+    char path[MAXPATHLEN + 1];
+    uint32_t be;
+    struct stat st;
+    int ret = -1;
+    int fd;
+    /* magic, version, 16 bytes of filler, two entries */
+    be = htonl(AD_MAGIC);
+    memcpy(sidecar, &be, sizeof(be));
+    be = htonl(AD_VERSION2);
+    memcpy(sidecar + 4, &be, sizeof(be));
+    sidecar[25] = 2;
+
+    for (size_t i = 0; i < sizeof(entry) / sizeof(entry[0]); i++) {
+        be = htonl(entry[i]);
+        memcpy(sidecar + AD_HEADER_LEN + 4 * i, &be, sizeof(be));
+    }
+
+    snprintf(data, sizeof(data), "%s/%s", vol->v_path, name);
+    snprintf(path, sizeof(path), "%s/._%s", vol->v_path, name);
+
+    if (createfile(&obj, vol->v_vid, DIRDID_ROOT, name) != AFP_OK) {
+        return -1;
+    }
+
+    if ((fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600)) != -1) {
+        if (write(fd, sidecar, len) == (ssize_t)len
+                && delete (&obj, vol->v_vid, DIRDID_ROOT, name) == AFP_OK
+                && stat(path, &st) == -1 && stat(data, &st) == -1) {
+            ret = 0;
+        }
+
+        close(fd);
+    }
+
+    unlink(path);
+    unlink(data);
+    return ret;
+}
+#endif
+
+/*!
+ * @brief FPDelete of a file whose ._ sidecar no reader or writer opens as it
+ *        is deletes the file and the sidecar: a resource fork recorded below
+ *        offset 82, a FinderInfo that needs converting, an empty sidecar
+ */
+static int utest_delete_file_whatever_sidecar_holds(struct vol *vol)
+{
+#ifdef HAVE_EAFD
+    /* the resource fork is a native stream, which no ._ file holds */
+    return TEST_SKIP;
+#else
+
+    /* without EAs the volume keeps AppleDouble v2, with no ._ file */
+    if (vol->v_adouble != AD_VERSION_EA) {
+        return TEST_SKIP;
+    }
+
+    /* the fork at 70, inside the canonical FinderInfo at 50; at 50, inside
+     * a 64-byte FinderInfo; at 114, right after it; then no header at all */
+    return lr_delete(vol, ADEDOFF_FINDERI_OSX + 20, ADEDLEN_FINDERI,
+                     LR_SIDECAR) == 0
+           && lr_delete(vol, ADEDOFF_FINDERI_OSX, ADEDLEN_FINDERI + 32,
+                        LR_SIDECAR) == 0
+           && lr_delete(vol, ADEDOFF_FINDERI_OSX + ADEDLEN_FINDERI + 32,
+                        ADEDLEN_FINDERI + 32, LR_SIDECAR) == 0
+           && lr_delete(vol, 0, 0, 0) == 0 ? 0 : -1;
+#endif
+}
+
+/*!
+ * @brief An FPWrite over AppleTalk for count bytes whose data the fault
+ *        interposer's asp_wrtcont() answers, failing with errnum or, for
+ *        errnum 0, handing back the whole reply buffer
+ *
+ * @returns 0 when the reply is AFPERR_MISC for the failure and AFPERR_PARAM
+ *          for the longer data, strict locking took and cleared the count's
+ *          range and the fork is still empty, -1 when not, TEST_SKIP without
+ *          AppleTalk, a shared libatalk or the preload
+ */
+static int asp_write_refused(struct vol *vol, uint32_t count, int errnum)
+{
+#if defined(NO_DDP) || !defined(AFPDTEST_SHARED_LIBATALK)
+    return TEST_SKIP;
+#else
+    const struct ofork *of;
+    char rbuf[DSI_BLOCKSIZ];
+    uint8_t req[12] = { 0 };
+    uint32_t count_be = htonl(count);
+    size_t rbuflen = sizeof(rbuf);
+    uint16_t refnum = 0;
+    AFPObj o = obj;
+    int ret = -1;
+
+    if (!test_capability(TEST_CAP_FAULT_INJECT, vol)) {
+        return TEST_SKIP;
+    }
+
+    if (createfile(&obj, vol->v_vid, DIRDID_ROOT, "asp_write") != AFP_OK) {
+        return -1;
+    }
+
+    if (openfork(&obj, vol->v_vid, DIRDID_ROOT, "asp_write", OPENFORK_DATA,
+                 OPENACC_RD | OPENACC_WR, &refnum) != AFP_OK) {
+        delete (&obj, vol->v_vid, DIRDID_ROOT, "asp_write");
+        return -1;
+    }
+
+    /* FPWrite: command, flag, fork, offset 0, count */
+    req[0] = AFP_WRITE;
+    memcpy(req + 2, &refnum, sizeof(refnum));
+    memcpy(req + 8, &count_be, sizeof(count_be));
+    o.proto = AFPPROTO_ASP;
+    o.dsi = NULL;
+    o.options.flags |= OPTION_STRICT_LOCKING;
+    fault_inject_reset();
+    fi.fcntl_watch = 1;
+    fi.asp_wrtcont.armed = errnum != 0;
+    fi.asp_wrtcont.errnum = errnum;
+    fi.asp_wrtcont_fill = errnum == 0;
+
+    if (afp_write(&o, (char *)req, sizeof(req), rbuf, &rbuflen)
+            == (errnum != 0 ? AFPERR_MISC : AFPERR_PARAM)
+            && fi.setlk_calls == 2 && fi.lock_last_type == F_UNLCK
+            && fi.lock_last_start == 0 && fi.lock_last_len == count
+            && (of = of_find(refnum)) != NULL
+            && ad_size(of->of_ad, ADEID_DFORK) == 0) {
+        ret = 0;
+    }
+
+    fault_inject_reset();
+    closefork(&obj, refnum);
+    delete (&obj, vol->v_vid, DIRDID_ROOT, "asp_write");
+    return ret;
+#endif
+}
+
+/*!
+ * @brief An FPWrite over AppleTalk whose data fails to arrive clears the
+ *        write lock strict locking took for its range
+ */
+static int utest_write_fork_asp_failure_unlocks(struct vol *vol)
+{
+    return asp_write_refused(vol, 100, EIO);
+}
+
+/*!
+ * @brief An FPWrite over AppleTalk whose data is longer than its ReqCount is
+ *        refused before any byte is written
+ */
+static int utest_write_fork_asp_over_count_refused(struct vol *vol)
+{
+    return asp_write_refused(vol, 1, 0);
 }
 
 _Static_assert(offsetof(struct guarded_adouble,
@@ -695,6 +1028,44 @@ static void dsi_test_noop_close(DSI *dsi)
     (void)dsi;
 }
 
+/*!
+ * @brief dsi_disconnect() on dsi, a session never logged in, then on one
+ *        logged in without a logout hook, then on one without a session
+ *
+ * @returns 0, or the number of the check that failed
+ */
+static int dsi_disconnect_checks(DSI *dsi, AFPObj *sess)
+{
+    int stdin_open = fcntl(STDIN_FILENO, F_GETFD) != -1;
+    dsi->proto_close = dsi_test_noop_close;
+    dsi->AFPobj = sess;
+
+    if (dsi_disconnect(dsi) != -1 || !(dsi->flags & DSI_DISCONNECTED)) {
+        return 1;
+    }
+
+    sess->uid = 1000;
+    sess->logout = NULL;
+    dsi->flags = 0;
+
+    if (dsi_disconnect(dsi) != 0 || !(dsi->flags & DSI_DISCONNECTED)) {
+        return 2;
+    }
+
+    dsi->AFPobj = NULL;
+
+    if (dsi_disconnect(dsi) != -1) {
+        return 3;
+    }
+
+    /* the session had no recvfile pipe to close */
+    if (stdin_open && fcntl(STDIN_FILENO, F_GETFD) == -1) {
+        return 4;
+    }
+
+    return 0;
+}
+
 /* dsi_disconnect() enters the disconnected state for a session that logged
  * in and refuses one that did not. login() refuses uid 0 and sets obj->uid
  * only on success, so that is the mark; the UAM's logout hook is not, since
@@ -703,30 +1074,18 @@ static int utest_dsi_disconnect_needs_login(void)
 {
     DSI dsi;
     AFPObj sess;
-    memset(&dsi, 0, sizeof(dsi));
+    int peer;
+    int ret;
+
+    if (dsi_test_open(&dsi, DSI_DATASIZ, &peer) != 0) {
+        return 5;
+    }
+
+    close(peer);
     memset(&sess, 0, sizeof(sess));
-    dsi.proto_close = dsi_test_noop_close;
-    dsi.AFPobj = &sess;
-
-    if (dsi_disconnect(&dsi) != -1 || !(dsi.flags & DSI_DISCONNECTED)) {
-        return 1;
-    }
-
-    sess.uid = 1000;
-    sess.logout = NULL;
-    dsi.flags = 0;
-
-    if (dsi_disconnect(&dsi) != 0 || !(dsi.flags & DSI_DISCONNECTED)) {
-        return 2;
-    }
-
-    dsi.AFPobj = NULL;
-
-    if (dsi_disconnect(&dsi) != -1) {
-        return 3;
-    }
-
-    return 0;
+    ret = dsi_disconnect_checks(&dsi, &sess);
+    dsi_test_cleanup(&dsi);
+    return ret;
 }
 
 static int utest_dsi_receive_valid_cmd(void)
@@ -1199,10 +1558,14 @@ int main(int argc, char *argv[])
                      "recvfile: a failed write drains its request");
     TEST_int_or_skip(utest_recvfile_error_leaves_no_residue(&obj, vol), 0,
                      "recvfile: a failed write leaves nothing for the next");
+    TEST_int_or_skip(utest_recvfile_readonly_replies_access(&obj, vol), 0,
+                     "recvfile: a read-only refusal replies access denied");
     TEST_int_or_skip(utest_recvfile_peer_close_ends_write(&obj, vol), 0,
                      "recvfile: a client closing mid-write ends the write");
     TEST_int_or_skip(utest_write_fork_eof_fails_request(&obj, vol), 0,
                      "write_fork: a payload cut by EOF fails the request");
+    TEST_int_or_skip(utest_recvfile_counting_arm_fails_nothing(&obj, vol), 0,
+                     "recvfile: a counting fault arm fails no splice() call");
     TEST_int_or_skip(utest_recvfile_urgent_byte_finishes_write(&obj, vol), 0,
                      "recvfile: a write past an urgent byte finishes in step");
     TEST_int_or_skip(utest_recvfile_urgent_byte_at_eof(&obj, vol), 0,
@@ -1215,12 +1578,24 @@ int main(int argc, char *argv[])
                      "recvfile: a failed resource fork write keeps its length");
     TEST_int_or_skip(utest_recvfile_high_fd_waits(&obj, vol), 0,
                      "recvfile: a socket above FD_SETSIZE waits for its data");
+    TEST_int_or_skip(utest_recvfile_urgent_byte_ahead_waits(&obj, vol), 0,
+                     "recvfile: an urgent byte past a gap leaves the write "
+                     "waiting for data");
     TEST_int_or_skip(utest_recvfile_unsplicable_fs_falls_back(&obj, vol), 0,
                      "recvfile: unsplicable files take the userspace path");
-    TEST_int_or_skip(utest_recvfile_bad_offset_keeps_splice(&obj, vol), 0,
-                     "recvfile: a refused offset leaves the file splicing");
+    TEST_int_or_skip(utest_recvfile_failed_copy_keeps_splice(&obj, vol), 0,
+                     "recvfile: a failed copy leaves the file splicing");
+    TEST_int_or_skip(utest_recvfile_socket_error_fails_request(&obj, vol), 0,
+                     "recvfile: a socket error on the first splice fails the "
+                     "write");
     TEST_int_or_skip(utest_recvfile_no_socket_splice_falls_back(&obj, vol), 0,
                      "recvfile: a refused socket splice falls back");
+    TEST_int_or_skip(utest_recvfile_spent_budget_retries(&obj, vol), 0,
+                     "recvfile: a spent pipe budget is tried again next write");
+    TEST_int_or_skip(utest_recvfile_pipe2_failure_retries(&obj, vol), 0,
+                     "recvfile: a write after a failed pipe2() splices");
+    TEST_int_or_skip(utest_recvfile_unsplicable_file_not_spliced(&obj, vol), 0,
+                     "recvfile: an unsplicable file is not spliced again");
     TEST_int_or_skip(utest_recvfile_pipe_takes_splice_size(&obj, vol), 0,
                      "recvfile: the pipe takes the size splice size asks for");
     TEST_int_or_skip(utest_recvfile_pipe_never_shrinks(&obj, vol), 0,
@@ -1229,6 +1604,32 @@ int main(int argc, char *argv[])
                      "recvfile: a refused pipe size is halved until granted");
     TEST_int_or_skip(utest_write_fork_short_write_fails_request(&obj, vol), 0,
                      "write_fork: a short fork write fails the request");
+    TEST_int_or_skip(utest_write_fork_payload_over_count_refused(&obj, vol), 0,
+                     "write_fork: a payload past its ReqCount is refused");
+    TEST_int_or_skip(utest_write_fork_asp_over_count_refused(vol), 0,
+                     "write_fork: AppleTalk data past its ReqCount is refused");
+    TEST_int_or_skip(utest_write_fork_zero_count_replies_offset(&obj, vol), 0,
+                     "write_fork: a ReqCount of 0 replies its offset");
+    TEST_int_or_skip(utest_write_fork_end_past_2gib_refused(&obj, vol), 0,
+                     "write_fork: a 32-bit end write past 2 GiB is refused");
+    TEST_int_or_skip(utest_write_fork_dfork_past_off_t_refused(&obj, vol), 0,
+                     "write_fork: a data fork write past off_t is refused");
+    TEST_int_or_skip(utest_write_fork_rfork_past_off_t_refused(&obj, vol), 0,
+                     "write_fork: a resource fork write past off_t is refused");
+    TEST_int_or_skip(utest_write_fork_short_block_refused(&obj, vol), 0,
+                     "write_fork: a block too short for its ReqCount is refused");
+    TEST_int_or_skip(utest_dsi_write_command_refused_in_command_frame(), 0,
+                     "DSI: a write command in a DSICommand is refused");
+    TEST_int_or_skip(utest_dsi_write_frame_drained(), 0,
+                     "DSI: a DSIWrite no write command takes is drained");
+    TEST_int_or_skip(utest_dsi_spurious_command_drains_nothing(), 0,
+                     "DSI: a spurious command leaves the next request whole");
+    TEST_int_or_skip(utest_dsi_write_refused_pwdexpired_drained(), 0,
+                     "DSI: an expired password's refusal drains a DSIWrite");
+    TEST_int_or_skip(utest_delete_file_whatever_sidecar_holds(vol), 0,
+                     "FPDelete: a file is deleted whatever its sidecar holds");
+    TEST_int_or_skip(utest_write_fork_asp_failure_unlocks(vol), 0,
+                     "write_fork: a failed AppleTalk write clears its lock");
     /* drives a full closevol/openvol cycle on vol and hands it back open */
     TEST_int(test_pfd_vol_close_purges_slots(&obj, vol), 0,
              "closevol: pfd slots keyed on the volume are retired");
